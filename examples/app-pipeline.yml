@@ -1,0 +1,53 @@
+# Example caller: copy to .github/workflows/pipeline.yml in an application repository.
+# Pull request -> build + scan. Push to main -> build, push, scan image, deploy staging,
+# then production after manual approval (configure "production" as a protected environment).
+name: Pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  build:
+    uses: GonService/github-actions-templates/.github/workflows/docker-build.yml@v1
+    with:
+      push: ${{ github.event_name == 'push' }}
+
+  scan:
+    needs: build
+    uses: GonService/github-actions-templates/.github/workflows/security-scan.yml@v1
+    with:
+      image-ref: ${{ github.event_name == 'push' && format('{0}@{1}', needs.build.outputs.image, needs.build.outputs.digest) || '' }}
+
+  deploy-staging:
+    if: github.event_name == 'push'
+    needs: [build, scan]
+    uses: GonService/github-actions-templates/.github/workflows/deploy-helm.yml@v1
+    with:
+      environment: staging
+      release: my-app
+      chart: ./deploy/chart
+      namespace: my-app-staging
+      values-file: ./deploy/values-staging.yaml
+      image-tag: ${{ needs.build.outputs.version }}
+    secrets:
+      KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+
+  deploy-production:
+    needs: [build, deploy-staging]
+    uses: GonService/github-actions-templates/.github/workflows/deploy-helm.yml@v1
+    with:
+      environment: production
+      release: my-app
+      chart: ./deploy/chart
+      namespace: my-app
+      values-file: ./deploy/values-production.yaml
+      image-tag: ${{ needs.build.outputs.version }}
+    secrets:
+      KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}

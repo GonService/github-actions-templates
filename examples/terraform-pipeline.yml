@@ -1,0 +1,25 @@
+# Example caller: copy to .github/workflows/terraform.yml in an infrastructure repository.
+# Every pull request gets fmt/validate/tflint and a plan posted as a comment.
+name: Terraform
+
+on:
+  pull_request:
+    paths: ["infra/**"]
+  push:
+    branches: [main]
+    paths: ["infra/**"]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  plan:
+    uses: GonService/github-actions-templates/.github/workflows/terraform.yml@v1
+    with:
+      working-directory: infra
+      run-plan: true
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}

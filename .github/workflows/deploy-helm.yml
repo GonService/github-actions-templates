@@ -1,0 +1,89 @@
+# Reusable workflow: deploy a Helm chart to Kubernetes, with automatic rollback on failure.
+name: Deploy with Helm
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub environment (enables approvals and environment secrets)."
+        type: string
+        required: true
+      release:
+        description: "Helm release name."
+        type: string
+        required: true
+      chart:
+        description: "Chart path or reference."
+        type: string
+        required: true
+      namespace:
+        description: "Kubernetes namespace."
+        type: string
+        required: true
+      values-file:
+        description: "Values file for this environment."
+        type: string
+        default: ""
+      image-tag:
+        description: "Image tag to deploy (sets image.tag)."
+        type: string
+        default: ""
+      timeout:
+        description: "How long Helm waits for the rollout."
+        type: string
+        default: "5m"
+    secrets:
+      KUBECONFIG_B64:
+        description: "Base64-encoded kubeconfig with access to the target namespace."
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}-${{ inputs.release }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Write kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: helm upgrade --install
+        env:
+          RELEASE: ${{ inputs.release }}
+          CHART: ${{ inputs.chart }}
+          NAMESPACE: ${{ inputs.namespace }}
+          VALUES: ${{ inputs.values-file }}
+          TAG: ${{ inputs.image-tag }}
+          TIMEOUT: ${{ inputs.timeout }}
+        run: |
+          args=(upgrade --install "$RELEASE" "$CHART" --namespace "$NAMESPACE" --create-namespace
+                --atomic --wait --timeout "$TIMEOUT" --history-max 10)
+          if [ -n "$VALUES" ]; then args+=(-f "$VALUES"); fi
+          if [ -n "$TAG" ]; then args+=(--set "image.tag=$TAG"); fi
+          helm "${args[@]}"
+
+      - name: Summary
+        env:
+          RELEASE: ${{ inputs.release }}
+          NAMESPACE: ${{ inputs.namespace }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          {
+            echo "### Deployed \`$RELEASE\` to \`$ENVIRONMENT\`"
+            echo '```'
+            helm status "$RELEASE" -n "$NAMESPACE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

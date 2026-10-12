@@ -1,0 +1,79 @@
+# Reusable workflow: Trivy scan of the repository (dependencies, IaC, secrets)
+# and, optionally, of a container image. Results go to the GitHub Security tab.
+name: Security scan
+
+on:
+  workflow_call:
+    inputs:
+      image-ref:
+        description: "Optional image to scan, e.g. ghcr.io/org/app:sha-abc123. Empty = repository scan only."
+        type: string
+        default: ""
+      severity:
+        description: "Severities that fail the job."
+        type: string
+        default: "CRITICAL,HIGH"
+      fail-on-findings:
+        description: "Fail the job when findings at the given severity exist."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+jobs:
+  repository:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy-fs.sarif
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: true
+
+      - name: Upload to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+      - name: Enforce severity gate
+        if: inputs.fail-on-findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: table
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: true
+          exit-code: "1"
+
+  image:
+    if: inputs.image-ref != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        if: startsWith(inputs.image-ref, 'ghcr.io/')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ inputs.image-ref }}
+          format: table
+          severity: ${{ inputs.severity }}
+          ignore-unfixed: true
+          exit-code: ${{ inputs.fail-on-findings && '1' || '0' }}

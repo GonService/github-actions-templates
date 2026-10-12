@@ -1,0 +1,40 @@
+# Self-check for this repository: lint every workflow and exercise the templates
+# against a small fixture so a broken template never reaches a tagged release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color .github/workflows/*.yml examples/*.yml
+
+  test-docker-build:
+    needs: actionlint
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      image-name: ${{ github.repository }}-fixture
+      context: test/fixture
+      push: false
+
+  test-security-scan:
+    needs: actionlint
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+    uses: ./.github/workflows/security-scan.yml
